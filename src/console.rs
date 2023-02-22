@@ -306,6 +306,7 @@ impl AddConsoleCommand for App {
 pub struct ConsoleOpen {
     /// Console open
     pub open: bool,
+    pub(crate) first_open: bool,
 }
 
 #[derive(Resource)]
@@ -340,6 +341,29 @@ pub(crate) fn console_ui(
         .any(|code| console_key_pressed(code, &config.keys));
     if pressed {
         console_open.open = !console_open.open;
+
+        // display help if first open
+        if console_open.open && !console_open.first_open {
+            console_open.first_open = true;
+            state.scrollback.push("Available commands:".into());
+            let longest_command_name = config
+                .commands
+                .keys()
+                .map(|name| name.len())
+                .max()
+                .unwrap_or(0);
+            for (name, cmd) in &config.commands {
+                let mut line = format!("  {name}{}", " ".repeat(longest_command_name - name.len()));
+                line.push_str(&format!(
+                    " - {}",
+                    cmd.get_about()
+                        .map(|about| about.to_string())
+                        .unwrap_or_default()
+                ));
+                state.scrollback.push(line.into());
+            }
+            state.scrollback.push("".into());
+        }
     }
 
     if console_open.open {
@@ -387,8 +411,29 @@ pub(crate) fn console_ui(
                         .lock_focus(true)
                         .font(egui::TextStyle::Monospace);
 
-                    // Handle enter
                     let text_edit_response = ui.add(text_edit);
+
+                    // autocomplete
+                    if text_edit_response.lost_focus()
+                        && ui.input().key_pressed(egui::Key::Tab)
+                        && !state.buf.is_empty()
+                    {
+                        let a = config
+                            .commands
+                            .keys()
+                            .filter(|c| c.starts_with(&state.buf))
+                            .collect::<Vec<_>>();
+                        match &a[..] {
+                            [command] => state.buf = format!("{command} "),
+                            [] => {}
+                            _ => state
+                                .scrollback
+                                .push(a.into_iter().copied().collect::<Vec<_>>().join(" ").into()),
+                        }
+                        set_cursor_pos(ui.ctx(), text_edit_response.id, state.buf.len());
+                    }
+
+                    // Handle enter
                     if text_edit_response.lost_focus() && ui.input().key_pressed(egui::Key::Enter) {
                         if state.buf.trim().is_empty() {
                             state.scrollback.push(StyledStr::new());
